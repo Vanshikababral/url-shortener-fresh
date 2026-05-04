@@ -27,30 +27,44 @@ app.get('/', function(req, res) {
 // POST /api/shorturl
 app.post('/api/shorturl', function(req, res) {
   const url = req.body.url;
+  console.log("Shortening URL:", url);
   
-  // Parse hostname for DNS lookup
-  const hostname = urlparser.parse(url).hostname;
-  
-  if (!hostname) {
+  // 1. Strict Protocol Check (Required by FCC)
+  const urlRegex = /^(http|https):\/\//i;
+  if (!urlRegex.test(url)) {
     return res.json({ error: 'invalid url' });
   }
 
+  // 2. Parse hostname for DNS lookup
+  let hostname;
+  try {
+    hostname = new URL(url).hostname;
+  } catch (e) {
+    return res.json({ error: 'invalid url' });
+  }
+  
   dns.lookup(hostname, async (err, address) => {
-    if (!address) {
-      res.json({ error: 'invalid url' });
+    if (err || !address) {
+      return res.json({ error: 'invalid url' });
     } else {
       try {
+        // 3. Check if URL already exists to return the same short_url
+        const existingUrl = await urls.findOne({ url: url });
+        if (existingUrl) {
+          return res.json({ original_url: url, short_url: existingUrl.short_url });
+        }
+
+        // 4. Create new entry
         const urlCount = await urls.countDocuments({});
         const urlDoc = {
           url,
           short_url: urlCount
         };
 
-        const result = await urls.insertOne(urlDoc);
-        console.log("URL Saved:", result);
+        await urls.insertOne(urlDoc);
         res.json({ original_url: url, short_url: urlCount });
-      } catch (err) {
-        console.error(err);
+      } catch (dbErr) {
+        console.error(dbErr);
         res.status(500).json({ error: 'database error' });
       }
     }
@@ -60,14 +74,15 @@ app.post('/api/shorturl', function(req, res) {
 // GET /api/shorturl/:short_url
 app.get("/api/shorturl/:short_url", async (req, res) => {
   const shorturl = req.params.short_url;
-  console.log("Requested short_url:", shorturl);
+  console.log("Requested redirection for ID:", shorturl);
 
   try {
+    // Convert shorturl to Number for the query
     const urlDoc = await urls.findOne({ short_url: +shorturl });
     if (urlDoc) {
-      res.redirect(urlDoc.url);
+      return res.redirect(urlDoc.url);
     } else {
-      res.json({ error: 'No short URL found for the given input' });
+      return res.json({ error: 'No short URL found for the given input' });
     }
   } catch (err) {
     console.error(err);
