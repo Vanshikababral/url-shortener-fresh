@@ -48,21 +48,23 @@ app.post('/api/shorturl', function(req, res) {
       return res.json({ error: 'invalid url' });
     } else {
       try {
-        // 3. Check if URL already exists to return the same short_url
+        // 3. Check if URL already exists
         const existingUrl = await urls.findOne({ url: url });
         if (existingUrl) {
           return res.json({ original_url: url, short_url: existingUrl.short_url });
         }
 
-        // 4. Create new entry
+        // 4. Create new entry (starting at 1)
         const urlCount = await urls.countDocuments({});
+        const nextId = urlCount + 1;
+        
         const urlDoc = {
           url,
-          short_url: urlCount
+          short_url: nextId
         };
 
         await urls.insertOne(urlDoc);
-        res.json({ original_url: url, short_url: urlCount });
+        res.json({ original_url: url, short_url: nextId });
       } catch (dbErr) {
         console.error(dbErr);
         res.status(500).json({ error: 'database error' });
@@ -77,7 +79,6 @@ app.get("/api/shorturl/:short_url", async (req, res) => {
   console.log("Requested redirection for ID:", shorturl);
 
   try {
-    // Convert shorturl to Number for the query
     const urlDoc = await urls.findOne({ short_url: +shorturl });
     if (urlDoc) {
       return res.redirect(urlDoc.url);
@@ -90,6 +91,18 @@ app.get("/api/shorturl/:short_url", async (req, res) => {
   }
 });
 
-app.listen(port, function() {
-  console.log(`Listening on port ${port}`);
-});
+// Connect to MongoDB and then start server
+async function startServer() {
+  try {
+    await client.connect();
+    console.log("Connected to MongoDB");
+    
+    app.listen(port, function() {
+      console.log(`Listening on port ${port}`);
+    });
+  } catch (err) {
+    console.error("Failed to connect to MongoDB:", err);
+  }
+}
+
+startServer();
