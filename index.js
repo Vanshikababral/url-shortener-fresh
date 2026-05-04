@@ -95,6 +95,7 @@ app.post('/api/shorturl', async (req, res) => {
 // GET /api/shorturl/:short_url
 app.get('/api/shorturl/:short_url', async (req, res) => {
   const shortUrl = req.params.short_url;
+  console.log("Requested short_url:", shortUrl); // Debug log for FCC tests
 
   try {
     // Find the original URL
