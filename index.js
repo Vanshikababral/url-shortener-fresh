@@ -1,118 +1,80 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
-const dns = require('dns');
-const mongoose = require('mongoose');
-const { URL } = require('url');
-
 const app = express();
+const { MongoClient } = require('mongodb');
+const dns = require('dns');
+const urlparser = require('url');
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// Setup MongoDB Client
+const client = new MongoClient(process.env.MONGO_URI);
+const db = client.db("urlshortener");
+const urls = db.collection("urls");
 
-// URL Schema
-const urlSchema = new mongoose.Schema({
-  original_url: { type: String, required: true },
-  short_url: { type: Number, required: true }
-});
-
-const Url = mongoose.model('Url', urlSchema);
-
-// Middleware
 app.use(cors());
-app.use(bodyParser.urlencoded({ extended: false }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 app.use('/public', express.static(`${process.cwd()}/public`));
 
-app.get('/', function (req, res) {
+app.get('/', function(req, res) {
   res.sendFile(process.cwd() + '/views/index.html');
 });
 
-// API Endpoints
-
 // POST /api/shorturl
-app.post('/api/shorturl', async (req, res) => {
-  const originalUrl = req.body.url;
-
-  // 1. Basic format check
-  try {
-    const urlObj = new URL(originalUrl);
-
-    // Only allow http and https
-    if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-      return res.json({ error: 'invalid url' });
-    }
-
-    // 2. DNS Lookup check
-    dns.lookup(urlObj.hostname, async (err) => {
-      if (err) {
-        return res.json({ error: 'invalid url' });
-      }
-
-      try {
-        // 3. Check if already exists
-        let findOne = await Url.findOne({ original_url: originalUrl });
-        if (findOne) {
-          return res.json({
-            original_url: findOne.original_url,
-            short_url: findOne.short_url
-          });
-        }
-
-        // 4. Create new entry
-        // Get the current max short_url
-        const lastUrl = await Url.findOne().sort({ short_url: -1 });
-        const nextShortUrl = lastUrl ? lastUrl.short_url + 1 : 1;
-
-        const newUrl = new Url({
-          original_url: originalUrl,
-          short_url: nextShortUrl
-        });
-
-        await newUrl.save();
-        res.json({
-          original_url: originalUrl,
-          short_url: nextShortUrl
-        });
-
-      } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'server error' });
-      }
-    });
-
-  } catch (err) {
-    // URL constructor throws if URL is invalid
+app.post('/api/shorturl', function(req, res) {
+  const url = req.body.url;
+  
+  // Parse hostname for DNS lookup
+  const hostname = urlparser.parse(url).hostname;
+  
+  if (!hostname) {
     return res.json({ error: 'invalid url' });
   }
+
+  dns.lookup(hostname, async (err, address) => {
+    if (!address) {
+      res.json({ error: 'invalid url' });
+    } else {
+      try {
+        const urlCount = await urls.countDocuments({});
+        const urlDoc = {
+          url,
+          short_url: urlCount
+        };
+
+        const result = await urls.insertOne(urlDoc);
+        console.log("URL Saved:", result);
+        res.json({ original_url: url, short_url: urlCount });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'database error' });
+      }
+    }
+  });
 });
 
 // GET /api/shorturl/:short_url
-app.get('/api/shorturl/:short_url', async (req, res) => {
-  const shortUrl = req.params.short_url;
-  console.log("Requested short_url:", shortUrl); // Debug log for FCC tests
+app.get("/api/shorturl/:short_url", async (req, res) => {
+  const shorturl = req.params.short_url;
+  console.log("Requested short_url:", shorturl);
 
   try {
-    // Find the original URL
-    const urlData = await Url.findOne({ short_url: Number(shortUrl) });
-
-    if (urlData) {
-      // Redirect to original URL
-      return res.redirect(urlData.original_url);
+    const urlDoc = await urls.findOne({ short_url: +shorturl });
+    if (urlDoc) {
+      res.redirect(urlDoc.url);
     } else {
-      return res.json({ error: 'No short URL found for the given input' });
+      res.json({ error: 'No short URL found for the given input' });
     }
-  } catch (error) {
-    console.error(error);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'server error' });
   }
 });
 
-app.listen(port, function () {
+app.listen(port, function() {
   console.log(`Listening on port ${port}`);
 });
